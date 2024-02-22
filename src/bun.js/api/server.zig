@@ -2197,7 +2197,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var this = pair.this;
             var stream = pair.stream;
             if (this.resp == null or this.flags.aborted) {
-                // stream.value.unprotect();
+                stream.value.unprotect();
                 this.finalizeForAbort();
                 return;
             }
@@ -2265,7 +2265,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 response_stream.sink.destroy();
                 this.endStream(this.shouldCloseConnection());
                 this.finalize();
-                // stream.value.unprotect();
+                stream.value.unprotect();
                 return;
             }
 
@@ -2305,13 +2305,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         },
                         .Fulfilled => {
                             streamLog("promise Fulfilled", .{});
-                            // defer stream.value.unprotect();
+                            defer stream.value.unprotect();
 
                             this.handleResolveStream();
                         },
                         .Rejected => {
                             streamLog("promise Rejected", .{});
-                            // defer stream.value.unprotect();
+                            defer stream.value.unprotect();
 
                             this.handleRejectStream(globalThis, promise.result(globalThis.vm()));
                         },
@@ -2331,7 +2331,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.flags.aborted) {
                 response_stream.detach();
                 stream.cancel(globalThis);
-                // defer stream.value.unprotect();
+                defer stream.value.unprotect();
                 response_stream.sink.markDone();
                 this.finalizeForAbort();
                 response_stream.sink.onFirstWrite = null;
@@ -2341,7 +2341,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             stream.value.ensureStillAlive();
-            // defer stream.value.unprotect();
+            defer stream.value.unprotect();
 
             const is_in_progress = response_stream.sink.has_backpressure or !(response_stream.sink.wrote == 0 and
                 response_stream.sink.buffer.len == 0);
@@ -2687,7 +2687,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                     if (lock.readable.get()) |stream_| {
                         const stream: JSC.WebCore.ReadableStream = stream_;
-                        stream.value.ensureStillAlive();
+                        const js_stream = stream.value;
+                        js_stream.protect();
+                        defer js_stream.unprotect();
+
                         lock.readable.deinit();
                         value.* = .{ .Used = {} };
 
@@ -2697,7 +2700,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
-                            // stream.value.unprotect();
                             this.runErrorHandler(err.toErrorInstance(this.server.globalThis));
                             return;
                         }
@@ -2721,7 +2723,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 std.debug.assert(this.byte_stream == null);
                                 if (this.resp == null) {
                                     // we don't have a response, so we can discard the stream
-                                    // stream.detachIfPossible(this.server.globalThis);
+                                    stream.detachIfPossible(this.server.globalThis);
                                     return;
                                 }
                                 const resp = this.resp.?;
@@ -2731,14 +2733,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     this.blob.from(byte_stream.buffer);
                                     this.doRenderBlob();
                                     // is safe to detach here because we're not going to receive any more data
-                                    // stream.detachIfPossible(this.server.globalThis);
+                                    stream.detachIfPossible(this.server.globalThis);
                                     return;
                                 }
 
                                 byte_stream.pipe = JSC.WebCore.Pipe.New(@This(), onPipe).init(this);
                                 this.readable_stream_ref = JSC.WebCore.ReadableStream.Strong.init(stream, this.server.globalThis);
                                 // we now hold a reference so we can safely ask to detach and will be detached when the last ref is dropped
-                                // stream.detachIfPossible(this.server.globalThis);
+                                stream.detachIfPossible(this.server.globalThis);
 
                                 this.byte_stream = byte_stream;
                                 this.response_buf_owned = byte_stream.buffer.moveToUnmanaged();
